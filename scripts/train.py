@@ -26,6 +26,7 @@ import openpi.training.optimizer as _optimizer
 import openpi.training.sharding as sharding
 import openpi.training.utils as training_utils
 import openpi.training.weight_loaders as _weight_loaders
+from openpi.training.noise_collector import NoiseCollector
 
 
 def init_logging():
@@ -140,6 +141,8 @@ def train_step(
     state: training_utils.TrainState,
     batch: tuple[_model.Observation, _model.Actions],
 ) -> tuple[training_utils.TrainState, dict[str, at.Array]]:
+
+
     model = nnx.merge(state.model_def, state.params)
     model.train()
 
@@ -147,15 +150,27 @@ def train_step(
     def loss_fn(
         model: _model.BaseModel, rng: at.KeyArrayLike, observation: _model.Observation, actions: _model.Actions
     ):
-        chunked_loss = model.compute_loss(rng, observation, actions, train=True)
-        return jnp.mean(chunked_loss)
+        # Only request auxiliary output for models that support it (Pi0, not Pi0FAST)
+        # Pi0FAST doesn't use noise/flow matching, so it won't have aux data
+        if hasattr(model, 'pi05') or 'Pi0' in model.__class__.__name__:
+            loss, aux = model.compute_loss(rng, observation, actions, train=True, return_aux=True)
+            chunked_loss = loss
+            return jnp.mean(chunked_loss), aux
+        else:
+            # For models without aux support (e.g., Pi0FAST)
+            chunked_loss = model.compute_loss(rng, observation, actions, train=True)
+            return jnp.mean(chunked_loss), {}
+
 
     train_rng = jax.random.fold_in(rng, state.step)
     observation, actions = batch
 
     # Filter out frozen params.
     diff_state = nnx.DiffState(0, config.trainable_filter)
-    loss, grads = nnx.value_and_grad(loss_fn, argnums=diff_state)(model, train_rng, observation, actions)
+    (loss, aux), grads = nnx.value_and_grad(loss_fn, argnums=diff_state, has_aux=True)(model, train_rng, observation, actions)
+
+
+
 
     params = state.params.filter(config.trainable_filter)
     updates, new_opt_state = state.tx.update(grads, state.opt_state, params)
@@ -187,8 +202,14 @@ def train_step(
         "loss": loss,
         "grad_norm": optax.global_norm(grads),
         "param_norm": optax.global_norm(kernel_params),
+        # Add aux data to info for logging
+        "aux": aux, 
+        "episode_index": observation.episode_index,
+        "frame_index": observation.frame_index,
+        "actions": actions,
     }
     return new_state, info
+
 
 
 def main(config: _config.TrainConfig):
@@ -207,7 +228,14 @@ def main(config: _config.TrainConfig):
 
     mesh = sharding.make_mesh(config.fsdp_devices)
     data_sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec(sharding.DATA_AXIS))
+
     replicated_sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
+
+    # Initialize NoiseCollector
+    noise_collector = None
+    if "pi05_piper_pick_cube" in config.name: # Only for this config or make it a flag
+        noise_collector = NoiseCollector(config.checkpoint_dir)
+
 
     checkpoint_manager, resuming = _checkpoints.initialize_checkpoint_dir(
         config.checkpoint_dir,
@@ -242,10 +270,12 @@ def main(config: _config.TrainConfig):
 
     ptrain_step = jax.jit(
         functools.partial(train_step, config),
+
         in_shardings=(replicated_sharding, train_state_sharding, data_sharding),
         out_shardings=(train_state_sharding, replicated_sharding),
         donate_argnums=(1,),
     )
+
 
     start_step = int(train_state.step)
     pbar = tqdm.tqdm(
@@ -259,7 +289,29 @@ def main(config: _config.TrainConfig):
     for step in pbar:
         with sharding.set_mesh(mesh):
             train_state, info = ptrain_step(train_rng, train_state, batch)
+            
+        if noise_collector is not None:
+            # Transfer data to host and log
+            # We use jax.device_get to move data to CPU numpy arrays
+            # We only log if we have valid indices
+            aux = info.get("aux", {})
+            if "noise" in aux and info.get("episode_index") is not None:
+                log_data = jax.device_get({
+                    "episode_index": info["episode_index"],
+                    "frame_index": info["frame_index"],
+                    "noise": aux["noise"],
+                    "time": aux["time"],
+                    "actions": info["actions"],
+                })
+                noise_collector.collect(log_data)
+            
+        # Remove aux data for logging to wandb/console to avoid clutter/errors and memory usage
+        # This must be done for ALL configs, not just when noise_collector is active
+        info = {k: v for k, v in info.items() if k not in ["aux", "episode_index", "frame_index", "actions"]}
+
         infos.append(info)
+
+
         if step % config.log_interval == 0:
             stacked_infos = common_utils.stack_forest(infos)
             reduced_info = jax.device_get(jax.tree.map(jnp.mean, stacked_infos))
@@ -274,6 +326,10 @@ def main(config: _config.TrainConfig):
 
     logging.info("Waiting for checkpoint manager to finish")
     checkpoint_manager.wait_until_finished()
+    
+    if noise_collector is not None:
+        noise_collector.close()
+
 
 
 if __name__ == "__main__":

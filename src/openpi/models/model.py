@@ -106,6 +106,10 @@ class Observation(Generic[ArrayT]):
     # Token loss mask (for FAST autoregressive model).
     token_loss_mask: at.Bool[ArrayT, "*b l"] | None = None
 
+    # Logging fields
+    episode_index: at.Int[ArrayT, "*b"] | None = None
+    frame_index: at.Int[ArrayT, "*b"] | None = None
+
     # Previous state and action for RTC.
     prev_state: at.Float[ArrayT, "*b s"] | None = None
     prev_action: at.Float[ArrayT, "*b ah ad"] | None = None
@@ -135,6 +139,7 @@ class Observation(Generic[ArrayT]):
             prev_action = None
             action_horizon = None
             actions_during_latency = None
+            
         return cls(
             images=data["image"],
             image_masks=data["image_mask"],
@@ -147,7 +152,10 @@ class Observation(Generic[ArrayT]):
             prev_action=prev_action,
             action_horizon=action_horizon,
             actions_during_latency=actions_during_latency,
+            episode_index=data.get("episode_index"),
+            frame_index=data.get("frame_index"),
         )
+
 
     def to_dict(self) -> at.PyTree[ArrayT]:
         """Convert the Observation to a nested dict."""
@@ -230,7 +238,10 @@ def preprocess_observation(
         prev_action=observation.prev_action,
         action_horizon=observation.action_horizon,
         actions_during_latency=observation.actions_during_latency,
+        episode_index=observation.episode_index,
+        frame_index=observation.frame_index,
     )
+
 
 
 @dataclasses.dataclass(frozen=True)
@@ -302,7 +313,9 @@ class BaseModel(nnx.Module, abc.ABC):
         actions: Actions,
         *,
         train: bool = False,
-    ) -> at.Float[at.Array, "*b ah"]: ...
+        return_aux: bool = False,
+    ) -> at.Float[at.Array, "*b ah"] | tuple[at.Float[at.Array, "*b ah"], dict]: ...
+
 
     @abc.abstractmethod
     def sample_actions(self, rng: at.KeyArrayLike, observation: Observation, **kwargs) -> Actions: ...

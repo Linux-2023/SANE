@@ -1079,10 +1079,13 @@ _CONFIGS = [
                             "actions": "action",
                             "prompt": "prompt",
                             #"advantage": "advantage",
+                            "episode_index": "episode_index",
+                            "frame_index": "frame_index",
                         }
                     )
                 ]
             ),
+
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
         pytorch_weight_path="/workspace/pjk/ELM/openpi/checkpoints/openpi/openpi-assets/checkpoints/pi05_base_pytorch",

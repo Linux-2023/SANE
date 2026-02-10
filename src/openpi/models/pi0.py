@@ -213,7 +213,12 @@ class Pi0(_model.BaseModel):
         )
         v_t = self.action_out_proj(suffix_out[:, -self.action_horizon :])
 
-        return jnp.mean(jnp.square(v_t - u_t), axis=-1)
+        v_t = self.action_out_proj(suffix_out[:, -self.action_horizon :])
+
+        loss = jnp.mean(jnp.square(v_t - u_t), axis=-1)
+        if return_aux:
+            return loss, {"noise": noise, "time": time}
+        return loss
 
     @override
     def sample_actions(
