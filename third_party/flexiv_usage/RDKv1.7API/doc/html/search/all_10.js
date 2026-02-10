@@ -1,0 +1,25 @@
+var searchData=
+[
+  ['rad2deg_147',['Rad2Deg',['../utility_8hpp.html#a92aaa4d09e11d035dbbb1bbfe89b6b81',1,'flexiv::rdk::utility::Rad2Deg(const std::array&lt; double, N &gt; &amp;rad_arr)'],['../utility_8hpp.html#ac1e2631d7f64c03bbfe96f7ce94b6a0a',1,'flexiv::rdk::utility::Rad2Deg(double rad)'],['../utility_8hpp.html#a0bd3cd3026ade1e679a51c3c92b390e7',1,'flexiv::rdk::utility::Rad2Deg(const std::vector&lt; double &gt; &amp;rad_vec)']]],
+  ['reachable_148',['reachable',['../classflexiv_1_1rdk_1_1_model.html#a5a764785a6746b7d07644ff40cac401b',1,'flexiv::rdk::Model']]],
+  ['ready_149',['READY',['../data_8hpp.html#ab88474d3a0c8e8237c915d6436fde337a2baa69eafc7204f3bd8648eba580c489',1,'flexiv::rdk']]],
+  ['recommended_5factions_150',['recommended_actions',['../structflexiv_1_1rdk_1_1_robot_event.html#ac1cede17880ca5419b134ae80faf13b5',1,'flexiv::rdk::RobotEvent']]],
+  ['recovery_151',['recovery',['../classflexiv_1_1rdk_1_1_robot.html#a2cbcf90791cbeffa5aa7ce8df79f1369',1,'flexiv::rdk::Robot']]],
+  ['reduced_152',['reduced',['../classflexiv_1_1rdk_1_1_robot.html#a9a89a4c479f2f22efdf4bf42895176ab',1,'flexiv::rdk::Robot']]],
+  ['ref_5fframe_153',['ref_frame',['../structflexiv_1_1rdk_1_1_coord.html#a7264c8d03a1f90a4e4f8960972d7196e',1,'flexiv::rdk::Coord']]],
+  ['ref_5fq_5fe_154',['ref_q_e',['../structflexiv_1_1rdk_1_1_coord.html#aad31370385bf6ba7f2567f88c911915c',1,'flexiv::rdk::Coord']]],
+  ['ref_5fq_5fm_155',['ref_q_m',['../structflexiv_1_1rdk_1_1_coord.html#a9b8df35becc2d3c24ed8f8e1a5dfac07',1,'flexiv::rdk::Coord']]],
+  ['releasing_5fbrake_156',['RELEASING_BRAKE',['../data_8hpp.html#ab88474d3a0c8e8237c915d6436fde337a917e2cfe89ad0388451713830f670972',1,'flexiv::rdk']]],
+  ['reload_157',['Reload',['../classflexiv_1_1rdk_1_1_model.html#a5781c5ec334cc14835a3df688eb46dc4',1,'flexiv::rdk::Model']]],
+  ['remove_158',['Remove',['../classflexiv_1_1rdk_1_1_tool.html#a78f6f20d3ef11fb97bc2f3a489f3b55a',1,'flexiv::rdk::Tool::Remove()'],['../classflexiv_1_1rdk_1_1_work_coord.html#a86962d6b5c25cb9d694879d33bd6f7a1',1,'flexiv::rdk::WorkCoord::Remove()']]],
+  ['robot_159',['Robot',['../classflexiv_1_1rdk_1_1_robot.html',1,'flexiv::rdk::Robot'],['../classflexiv_1_1rdk_1_1_robot.html#a949b1939cbff0affe6d77bf800761041',1,'flexiv::rdk::Robot::Robot()']]],
+  ['robot_2ehpp_160',['robot.hpp',['../robot_8hpp.html',1,'']]],
+  ['robotevent_161',['RobotEvent',['../structflexiv_1_1rdk_1_1_robot_event.html',1,'flexiv::rdk']]],
+  ['robotinfo_162',['RobotInfo',['../structflexiv_1_1rdk_1_1_robot_info.html',1,'flexiv::rdk']]],
+  ['robotstates_163',['RobotStates',['../structflexiv_1_1rdk_1_1_robot_states.html',1,'flexiv::rdk']]],
+  ['rt_5fcartesian_5fmotion_5fforce_164',['RT_CARTESIAN_MOTION_FORCE',['../mode_8hpp.html#abd8ac5485e71ee45f162bf83ada3d250a435483155026f0f965456cd012870330',1,'flexiv::rdk']]],
+  ['rt_5fjoint_5fimpedance_165',['RT_JOINT_IMPEDANCE',['../mode_8hpp.html#abd8ac5485e71ee45f162bf83ada3d250a248ff0bdbdb55bdfb9c70f805aecafc8',1,'flexiv::rdk']]],
+  ['rt_5fjoint_5fposition_166',['RT_JOINT_POSITION',['../mode_8hpp.html#abd8ac5485e71ee45f162bf83ada3d250af9e91755145a9a8865b5a35c79fc98f1',1,'flexiv::rdk']]],
+  ['rt_5fjoint_5ftorque_167',['RT_JOINT_TORQUE',['../mode_8hpp.html#abd8ac5485e71ee45f162bf83ada3d250a2e68cb5a3c1369def97d588f4597980c',1,'flexiv::rdk']]],
+  ['runautorecovery_168',['RunAutoRecovery',['../classflexiv_1_1rdk_1_1_robot.html#afb5c2bc93f081a3246e29f2c42e1a882',1,'flexiv::rdk::Robot']]]
+];

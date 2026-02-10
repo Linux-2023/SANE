@@ -1,0 +1,74 @@
+# 双臂环境配置文件示例
+# 用于 DualArmEnvironment
+#
+# 支持的相机类型:
+#   - "usb": 普通 USB 摄像头
+#   - "realsense": Intel RealSense 摄像头
+#   - "gopro": GoPro（通过 Elgato Cam Link 采集卡）
+
+left_arm:
+  # 左臂机器人序列号
+  robot_sn: "Rizon4s-063239"
+  # 左臂夹爪名称（留空表示不使用夹爪）
+  gripper_name: "Flexiv-GN01"
+  # 左臂腕部相机 ID
+  wrist_camera_id: 2
+  # 左臂腕部相机类型: "usb", "realsense", "gopro"
+  wrist_camera_type: "gopro"
+  # 左臂初始关节角度 (度)，共7个关节
+  # 如果需要指定夹爪初始状态，添加第8个值（0-1，表示开口比例）
+  init_joints_deg: [8.84, -44.50, -13.61, -82.2, 86.35,8.2, 40.83, 0.0]
+
+right_arm:
+  # 右臂机器人序列号
+  robot_sn: "Rizon4s-063215"
+  # 右臂夹爪名称
+  gripper_name: "Flexiv-GN01"
+  # 右臂腕部相机 ID
+  wrist_camera_id: 0
+  # 右臂腕部相机类型: "usb", "realsense", "gopro"
+  wrist_camera_type: "gopro"
+  # 右臂初始关节角度 (度)
+  init_joints_deg: [-6.78, 46.79, 8.76, 67.47, 93.46, 2.01, -22.59, 0.0]
+
+# 全局相机配置（可选）
+# 如果不需要全局相机，可以注释掉整个 high_camera 部分或将 camera_id 设为 null
+high_camera:
+  camera_id: 4  # 设为 null 禁用全局相机
+  camera_type: "gopro"  # 支持 "usb", "realsense", "gopro"
+
+# 相机分辨率配置
+camera:
+  wrist_width: 1600
+  wrist_height: 1200
+  high_width: 1600
+  high_height: 1200
+  fps: 30
+
+# 环境参数
+environment:
+  max_episode_steps: 6000
+  # 夹爪最大开口宽度 (米)
+  gripper_max_width: 0.1
+  # 看门狗超时时间 (秒)
+  watchdog_timeout: 5.0
+  # 动作历史队列大小（用于检测动作停止）
+  action_history_size: 30
+  # 动作变化阈值（低于此阈值认为动作已停止）
+  action_change_threshold: 0.01
+  tele_mode: False
+  record_mode: False
+  record_directory: "recorded_data"
+  prompt: "place the box in the middle of the table and then put any object into the box"
+  verbose: True
+  use_pose_control: True
+
+# 碰撞检测配置
+collision:
+  # 是否启用碰撞检测
+  enabled: true
+  # 安全距离阈值 (米)
+  # - 正值: 两臂距离小于此值时认为有碰撞风险，跳过动作，算一次最小距离需要30ms
+  # - 0 或负值: 仅检测实际碰撞（快速模式），算是否碰撞只需0.1ms
+  safety_threshold: 0  # 30mm
+

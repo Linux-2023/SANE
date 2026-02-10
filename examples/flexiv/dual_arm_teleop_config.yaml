@@ -1,0 +1,65 @@
+# 双臂遥操作配置文件
+# 每个机械臂有独立的配置
+
+# ==================== 左臂配置 ====================
+left_arm:
+  # T265 相机序列号 (可通过 rs-enumerate-devices 查看)
+  # 留空则自动选择第一个可用的 T265
+  t265_serial: "121222110260"
+  
+  # 编码器串口
+  encoder_port: "/dev/ttyUSB0"
+  # 编码器方向: 1 表示编码器增加=张开, -1 表示编码器增加=闭合
+  encoder_direction: 1
+  # 编码器角度倍率
+  encoder_scale: 2.0
+  
+# ==================== 右臂配置 ====================
+right_arm:
+  # T265 相机序列号 (可通过 rs-enumerate-devices 查看)
+  # 留空则自动选择第二个可用的 T265
+  t265_serial: "132222111217"
+  
+  # 编码器串口
+  encoder_port: "/dev/ttyUSB1"
+  # 编码器方向
+  encoder_direction: -1
+  # 编码器角度倍率
+  encoder_scale: 2.0
+
+# ==================== 通用控制参数 ====================
+control:
+  # 控制模式: "joint" 或 "cartesian"
+  # - joint: 将 T265 位姿通过 IK 转换为关节角后控制（默认）
+  # - cartesian: 直接用 T265 位姿进行笛卡尔空间控制（无需 IK）
+  control_mode: "cartesian"
+  
+  # 控制频率 (Hz)
+  frequency: 30.0
+  # 位置映射缩放比例
+  position_scale: 1.5
+  
+  # 滤波参数
+  # 姿态最大响应增益 (0.0-1.0)，越大越灵敏
+  alpha: 0.8
+  # 姿态死区阈值 (度)
+  rot_deadband_deg: 1.0
+  # 姿态快速响应阈值 (度)
+  rot_fullspeed_deg: 8.0
+  # 姿态最小响应增益
+  rot_alpha_min: 0.05
+  # 位置死区阈值 (mm)
+  pos_deadband_mm: 1.0
+  # 位置快速响应阈值 (mm)
+  pos_fullspeed_mm: 10.0
+  # 位置最小响应增益
+  pos_alpha_min: 0.05
+  # 位置最大响应增益
+  pos_alpha_max: 0.6
+  
+  # 初始化关节运动超时 (秒)
+  init_joints_timeout: 60.0
+
+  # 人与机械臂的相对方向，'same'为同向，'opposite'为面对面
+  human_to_robot_direction: "opposite" 
+

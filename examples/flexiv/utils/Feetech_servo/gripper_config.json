@@ -1,0 +1,20 @@
+{
+  
+  "baudrate": 1000000,
+  "grippers": {
+    "left": {
+      "port": "/dev/ttyACM0",
+      "servo_id": 7,
+      "min_position": 1404,
+      "max_position": 1051,
+      "calibration_time": "2026-01-05 09:44:46"
+    },
+    "right": {
+      "port": "/dev/ttyACM1",
+      "servo_id": 1,
+      "min_position": 3671,
+      "max_position": 3321,
+      "calibration_time": "2026-01-05 09:45:25"
+    }
+  }
+}

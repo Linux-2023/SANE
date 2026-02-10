@@ -1,0 +1,6 @@
+[submodule "librealsense"]
+	path = librealsense
+	url = https://github.com/realsenseai/librealsense.git
+	# 注意：此子模块需要使用 v2.48.0 tag
+	# 初始化后需要手动切换到该 tag: cd librealsense && git checkout v2.48.0
+

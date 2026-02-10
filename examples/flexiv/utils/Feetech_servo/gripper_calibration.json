@@ -1,0 +1,7 @@
+{
+  "servo_id": 7,
+  "port": "/dev/ttyACM1",
+  "min_position": 1410,
+  "max_position": 1064,
+  "calibration_time": "2026-01-05 09:40:30"
+}

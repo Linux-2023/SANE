@@ -1,0 +1,24 @@
+name: flexiv
+channels:
+  - conda-forge
+dependencies:
+  # 尽量只保留"高层"依赖，避免把 libffi/tk 等底层库版本钉死导致 Python 降级不可解
+  - python=3.8
+  - pip
+  - setuptools
+  - wheel
+  - numpy=1.24.*
+  - pyyaml
+  - pytest
+  - pip:
+      - flexivrdk==1.7.0
+      - pybind11
+      - spdlog==2.0.6
+      - minimalmodbus
+      # 如果你是为了装 T265 相关的老版本 wheel，这里直接锁到 2.48
+      - pyrealsense2==2.48.0.3381
+      # 碰撞检测依赖 (Pinocchio + HPP-FCL)
+      # 注意: pin==2.6.21 是兼容 Python 3.8 的最后版本
+      # 注意: 不要安装 PyPI 上的 'pinocchio' 包，它是另一个无关项目！
+      - pin==2.6.21
+      - hpp-fcl==2.4.4

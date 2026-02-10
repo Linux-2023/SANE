@@ -1,0 +1,86 @@
+# 双臂环境配置文件（Feetech 夹爪版本）
+# 用于 DualArmEnvironmentFeetech
+#
+# 支持的相机类型:
+#   - "usb": 普通 USB 摄像头
+#   - "realsense": Intel RealSense 摄像头
+#   - "gopro": GoPro（通过 Elgato Cam Link 采集卡）
+
+right_arm:
+  # 左臂机器人序列号
+  robot_sn: "Rizon4s-063239"
+  # 左臂 Feetech 夹爪配置
+  gripper_side: "left"  # 夹爪侧别，用于从配置文件读取对应配置
+  gripper_name: "Feetech"
+  gripper_config_file: "/home/ztlab/Project/ELM/openpi/examples/flexiv/utils/Feetech_servo/gripper_config.json"  # 夹爪配置文件路径，相对于项目根目录
+  # 左臂腕部相机 ID
+  wrist_camera_id: 0
+  # 左臂腕部相机类型: "usb", "realsense", "gopro"
+  wrist_camera_type: "usb"
+  # 左臂初始关节角度 (度)，共7个关节
+  init_joints_deg: [12, -47.76, -19.86, -100.43, 64.69, 27.58, 56.76]
+  # init_joints_deg: [11.97, -44.80, -10.79, -91.60, 86.30, 16.88, 38.06]
+  # init_joints_deg: [5.66, -0.85,-40.87, -67.33, 106.68, 33.13, 63.44]
+left_arm:
+  # 右臂机器人序列号
+  robot_sn: "Rizon4s-063215"
+  # 右臂 Feetech 夹爪配置
+  gripper_name: "Feetech"
+  gripper_side: "right"  # 夹爪侧别，用于从配置文件读取对应配置
+  gripper_config_file: "/home/ztlab/Project/ELM/openpi/examples/flexiv/utils/Feetech_servo/gripper_config.json"  # 夹爪配置文件路径，相对于项目根目录
+  # 右臂腕部相机 ID
+  wrist_camera_id: 2
+  # 右臂腕部相机类型: "usb", "realsense", "gopro"
+  wrist_camera_type: "usb"
+  # 右臂初始关节角度 (度)
+  init_joints_deg: [-11.20, 50.01, 6.45, 82.63, 96.06, 14.66, -22.66]
+  # init_joints_deg: [-15.11, 41.59, 20.56, 69.16, 96.30, 8.34, -31.35]
+
+
+# 全局相机配置（可选）
+# 如果不需要全局相机，可以注释掉整个 high_camera 部分或将 camera_id 设为 null
+high_camera:
+  camera_id: null  # 设为 null 禁用全局相机
+  camera_type: "gopro"  # 支持 "usb", "realsense", "gopro"
+
+# 相机分辨率配置
+camera:
+  wrist_width: 1600
+  wrist_height: 1200
+  high_width: 1600
+  high_height: 1200
+  fps: 30
+
+# 环境参数
+environment:
+  max_episode_steps: 6000
+  # 看门狗超时时间 (秒)
+  watchdog_timeout: 5.0
+  # 动作历史队列大小（用于检测动作停止）
+  action_history_size: 30
+  # 动作变化阈值（低于此阈值认为动作已停止）
+  action_change_threshold: 0.01
+  tele_mode: False
+  record_mode: False
+  record_directory: "recorded_data"
+  prompt: "put the object in the box"
+  verbose: True
+  use_pose_control: True
+
+# Feetech 夹爪控制配置
+# 注意：夹爪控制直接使用归一化值 (0-1)，转换为百分比 (0-100) 控制，不使用阈值
+gripper:
+  # 夹爪闭合阈值（已废弃，保留以保持兼容性，实际不使用）
+  close_threshold: 0.05
+  # 夹爪打开阈值（已废弃，保留以保持兼容性，实际不使用）
+  open_threshold: 0.95
+
+# 碰撞检测配置
+collision:
+  # 是否启用碰撞检测
+  enabled: true
+  # 安全距离阈值 (米)
+  # - 正值: 两臂距离小于此值时认为有碰撞风险，跳过动作，算一次最小距离需要30ms
+  # - 0 或负值: 仅检测实际碰撞（快速模式），算是否碰撞只需0.1ms
+  safety_threshold: 0  # 30mm
+
