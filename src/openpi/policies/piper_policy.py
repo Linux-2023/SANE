@@ -90,6 +90,12 @@ class PiperInputs(transforms.DataTransformFn):
         if "advantage" in data:
             inputs["advantage"] = data["advantage"]
 
+        # Preserve episode_index and frame_index for noise data collection
+        if "episode_index" in data:
+            inputs["episode_index"] = data["episode_index"]
+        if "frame_index" in data:
+            inputs["frame_index"] = data["frame_index"]
+
         return inputs
 
 
