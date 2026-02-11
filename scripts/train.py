@@ -295,7 +295,17 @@ def main(config: _config.TrainConfig):
             # We use jax.device_get to move data to CPU numpy arrays
             # We only log if we have valid indices
             aux = info.get("aux", {})
-            if "noise" in aux and info.get("episode_index") is not None:
+            episode_index = info.get("episode_index")
+            
+            # Debug logging for first few steps
+            if step < 5:
+                logging.info(f"Step {step} DEBUG: aux_keys={list(aux.keys())}, has_episode_index={episode_index is not None}")
+                if episode_index is not None:
+                    logging.info(f"  episode_index shape/value: {episode_index}")
+                if aux:
+                    logging.info(f"  aux content: {[(k, type(v).__name__) for k, v in aux.items()]}")
+            
+            if "noise" in aux and episode_index is not None:
                 log_data = jax.device_get({
                     "episode_index": info["episode_index"],
                     "frame_index": info["frame_index"],
@@ -304,6 +314,10 @@ def main(config: _config.TrainConfig):
                     "actions": info["actions"],
                 })
                 noise_collector.collect(log_data)
+                if step == 0:
+                    logging.info(f"Successfully collected noise data for step {step}")
+            elif step < 3:
+                logging.warning(f"Step {step}: Skipping collection - has_noise={'noise' in aux}, has_episode_index={episode_index is not None}")
             
         # Remove aux data for logging to wandb/console to avoid clutter/errors and memory usage
         # This must be done for ALL configs, not just when noise_collector is active

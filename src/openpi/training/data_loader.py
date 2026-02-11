@@ -127,6 +127,34 @@ class FakeDataset(Dataset):
         return self._num_samples
 
 
+class LeRobotIndexWrapper:
+    """Wrapper to inject episode_index and frame_index from LeRobot's underlying HuggingFace dataset."""
+    
+    def __init__(self, lerobot_dataset):
+        self.dataset = lerobot_dataset
+    
+    def __getitem__(self, idx):
+        # Get the processed sample from LeRobot
+        sample = self.dataset[idx]
+        
+        # Access the underlying HuggingFace dataset to get metadata
+        # LeRobot stores it in .hf_dataset
+        if hasattr(self.dataset, 'hf_dataset'):
+            hf_sample = self.dataset.hf_dataset[idx]
+            # Inject episode_index and frame_index from the HuggingFace dataset
+            sample['episode_index'] = int(hf_sample['episode_index'])
+            sample['frame_index'] = int(hf_sample['frame_index'])
+        else:
+            # Fallback if hf_dataset is not available
+            sample['episode_index'] = 0
+            sample['frame_index'] = idx
+        
+        return sample
+    
+    def __len__(self):
+        return len(self.dataset)
+
+
 def create_torch_dataset(
     data_config: _config.DataConfig, action_horizon: int, model_config: _model.BaseModelConfig
 ) -> Dataset:
@@ -145,8 +173,15 @@ def create_torch_dataset(
         },
     )
 
+    # Wrap to inject episode_index and frame_index
+    dataset = LeRobotIndexWrapper(dataset)
+    
+    transforms_to_apply = []
     if data_config.prompt_from_task:
-        dataset = TransformedDataset(dataset, [_transforms.PromptFromLeRobotTask(dataset_meta.tasks)])
+        transforms_to_apply.append(_transforms.PromptFromLeRobotTask(dataset_meta.tasks))
+    
+    if transforms_to_apply:
+        dataset = TransformedDataset(dataset, transforms_to_apply)
 
     return dataset
 
@@ -536,5 +571,32 @@ class DataLoaderImpl(DataLoader):
         return self._data_config
 
     def __iter__(self):
-        for batch in self._data_loader:
-            yield _model.Observation.from_dict(batch), batch["actions"]
+        import dataclasses
+        for i, batch in enumerate(self._data_loader):
+            # Debug: Check if batch has episode_index and frame_index
+            if i == 0:
+                logging.info(f"[DEBUG] First batch keys: {list(batch.keys())}")
+                if "episode_index" in batch:
+                    logging.info(f"[DEBUG] batch['episode_index'] type: {type(batch['episode_index'])}, value: {batch['episode_index']}")
+                else:
+                    logging.warning(f"[DEBUG] 'episode_index' NOT in batch keys!")
+            
+            # Create Observation from batch
+            obs = _model.Observation.from_dict(batch)
+            actions = batch["actions"]
+            
+            # Manually inject episode_index and frame_index if they exist in batch
+            episode_index = batch.get("episode_index", None)
+            frame_index = batch.get("frame_index", None)
+            
+            if episode_index is not None:
+                obs = dataclasses.replace(obs, episode_index=episode_index)
+            if frame_index is not None:
+                obs = dataclasses.replace(obs, frame_index=frame_index)
+            
+            # Debug first batch
+            if i == 0:
+                logging.info(f"[DEBUG] After injection - obs.episode_index: {obs.episode_index}")
+                logging.info(f"[DEBUG] After injection - obs.frame_index: {obs.frame_index}")
+            
+            yield obs, actions
