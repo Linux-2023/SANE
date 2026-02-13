@@ -26,7 +26,7 @@ import openpi.training.optimizer as _optimizer
 import openpi.training.sharding as sharding
 import openpi.training.utils as training_utils
 import openpi.training.weight_loaders as _weight_loaders
-from openpi.training.noise_collector import NoiseCollector
+from openpi.training.noise_collector_hdf5 import NoiseCollectorHDF5
 
 
 def init_logging():
@@ -231,10 +231,14 @@ def main(config: _config.TrainConfig):
 
     replicated_sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
 
-    # Initialize NoiseCollector
+    # Initialize NoiseCollectorHDF5 (HDF5 format with compression)
     noise_collector = None
-    if "pi05_piper_pick_cube" in config.name: # Only for this config or make it a flag
-        noise_collector = NoiseCollector(config.checkpoint_dir)
+    if "pi05_piper_pick_cube" in config.name:
+        noise_collector = NoiseCollectorHDF5(
+            config.checkpoint_dir,
+            compression="gzip",
+            compression_opts=5
+        )
 
 
     checkpoint_manager, resuming = _checkpoints.initialize_checkpoint_dir(
