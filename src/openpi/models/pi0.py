@@ -10,6 +10,7 @@ from jax import debug
 
 from openpi.models import model as _model
 from openpi.models import pi0_config
+from openpi.models import gp_utils as _gp_utils
 import openpi.models.gemma as _gemma
 import openpi.models.siglip as _siglip
 from openpi.shared import array_typing as at
@@ -69,6 +70,8 @@ class Pi0(_model.BaseModel):
     def __init__(self, config: pi0_config.Pi0Config, rngs: nnx.Rngs):
         super().__init__(config.action_dim, config.action_horizon, config.max_token_len)
         self.pi05 = config.pi05
+        # Store config for use in compute_loss (GP prior settings, etc.)
+        self._config = config
         paligemma_config = _gemma.get_config(config.paligemma_variant)
         action_expert_config = _gemma.get_config(config.action_expert_variant)
         # TODO: rewrite gemma in NNX. For now, use bridge.
@@ -195,7 +198,18 @@ class Pi0(_model.BaseModel):
         observation = _model.preprocess_observation(preprocess_rng, observation, train=train)
 
         batch_shape = actions.shape[:-2]
-        noise = jax.random.normal(noise_rng, actions.shape)
+
+        # --- Noise sampling: i.i.d. Gaussian or GP prior ---
+        if self._config.use_gp_prior:
+            noise = _gp_utils.sample_gp_noise(
+                noise_rng,
+                actions.shape,
+                action_horizon=self.action_horizon,
+                kernel_type=self._config.gp_kernel_type,
+                length_scale=self._config.gp_length_scale,
+            )
+        else:
+            noise = jax.random.normal(noise_rng, actions.shape)
         time = jax.random.beta(time_rng, 1.5, 1, batch_shape) * 0.999 + 0.001
         time_expanded = time[..., None, None]
         x_t = time_expanded * noise + (1 - time_expanded) * actions

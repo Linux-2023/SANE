@@ -33,11 +33,32 @@ class Pi0Config(_model.BaseModelConfig):
     discrete_state_input: bool = None  # type: ignore
     advantage_input: bool = False
 
+    # --------------- Gaussian Process prior settings ---------------
+    # When enabled, replaces i.i.d. Gaussian noise with GP-structured noise
+    # that introduces temporal correlations across the action horizon.
+    # action_horizon=50 (predicted), execution_horizon=15 (executed).
+    use_gp_prior: bool = False
+    # Kernel function: "SE" (smooth), "OU" (rough/Brownian), "PE" (periodic)
+    gp_kernel_type: str = "SE"
+    # Length scale ℓ. Recommended: SE=5.0, OU=3.0, PE=2.0 (for exec_horizon=15)
+    gp_length_scale: float = 5.0
+
     def __post_init__(self):
         if self.max_token_len is None:
             object.__setattr__(self, "max_token_len", 200 if self.pi05 else 48)
         if self.discrete_state_input is None:
             object.__setattr__(self, "discrete_state_input", self.pi05)
+        # Validate GP settings
+        if self.use_gp_prior:
+            valid_kernels = ("SE", "OU", "PE")
+            if self.gp_kernel_type not in valid_kernels:
+                raise ValueError(
+                    f"gp_kernel_type must be one of {valid_kernels}, got {self.gp_kernel_type!r}"
+                )
+            if self.gp_length_scale <= 0:
+                raise ValueError(
+                    f"gp_length_scale must be positive, got {self.gp_length_scale}"
+                )
 
     @property
     @override
