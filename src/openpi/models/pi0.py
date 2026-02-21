@@ -11,6 +11,7 @@ from jax import debug
 from openpi.models import model as _model
 from openpi.models import pi0_config
 from openpi.models import gp_utils as _gp_utils
+from openpi.models import ot_utils as _ot_utils
 import openpi.models.gemma as _gemma
 import openpi.models.siglip as _siglip
 from openpi.shared import array_typing as at
@@ -210,6 +211,16 @@ class Pi0(_model.BaseModel):
             )
         else:
             noise = jax.random.normal(noise_rng, actions.shape)
+
+        # --- OT coupling: re-pair noise with actions within the batch ---
+        # Preserves GP temporal structure within each sample (only permutes
+        # across the batch dimension) while reducing expected transport cost.
+        if self._config.use_ot_coupling and actions.ndim == 3:
+            noise = _ot_utils.apply_ot_coupling(
+                actions, noise,
+                reg=self._config.ot_reg,
+                num_iters=self._config.ot_num_iters,
+            )
         time = jax.random.beta(time_rng, 1.5, 1, batch_shape) * 0.999 + 0.001
         time_expanded = time[..., None, None]
         x_t = time_expanded * noise + (1 - time_expanded) * actions

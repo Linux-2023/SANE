@@ -43,6 +43,17 @@ class Pi0Config(_model.BaseModelConfig):
     # Length scale ℓ. Recommended: SE=5.0, OU=3.0, PE=2.0 (for exec_horizon=15)
     gp_length_scale: float = 5.0
 
+    # --------------- Mini-batch OT coupling settings ---------------
+    # When enabled, re-pairs GP noise samples with actions within each batch
+    # using Sinkhorn OT to minimise the expected flow-matching transport cost.
+    # Can be combined with use_gp_prior (GP for temporal structure, OT for pairing).
+    use_ot_coupling: bool = False
+    # Sinkhorn regularisation ε. Smaller → harder (permutation-like) assignment.
+    # Larger → softer/more stable. Recommended range: [0.05, 0.5].
+    ot_reg: float = 0.1
+    # Number of Sinkhorn iterations (20 is sufficient for most batch sizes).
+    ot_num_iters: int = 20
+
     def __post_init__(self):
         if self.max_token_len is None:
             object.__setattr__(self, "max_token_len", 200 if self.pi05 else 48)
@@ -59,6 +70,12 @@ class Pi0Config(_model.BaseModelConfig):
                 raise ValueError(
                     f"gp_length_scale must be positive, got {self.gp_length_scale}"
                 )
+        # Validate OT settings
+        if self.use_ot_coupling:
+            if self.ot_reg <= 0:
+                raise ValueError(f"ot_reg must be positive, got {self.ot_reg}")
+            if self.ot_num_iters < 1:
+                raise ValueError(f"ot_num_iters must be >= 1, got {self.ot_num_iters}")
 
     @property
     @override
