@@ -1,8 +1,12 @@
 """Gaussian Process utilities for structured noise sampling in Flow Matching.
 
-Provides three kernel functions (SE, OU, PE) and GP noise sampling that
-introduces temporal correlations across the action horizon, replacing the
-default i.i.d. Gaussian noise.
+Provides three kernel functions (SE, OU, PE), unconditional GP noise sampling,
+and GPR (Gaussian Process Regression) conditional posterior sampling.
+
+Unconditional GP: replaces i.i.d. Gaussian noise with temporally-correlated noise.
+GPR: conditions the initial noise on past executed actions y_p, so the noise
+     starting point reflects the temporal context of the previous action chunk.
+     This achieves cross-chunk temporal coherence without OT Coupling.
 
 Designed for action_horizon=50, with execution_horizon=15 in mind.
 Recommended length_scale values: SE=5.0, OU=3.0, PE=2.0
@@ -175,5 +179,136 @@ def sample_gp_noise(
     # eps: (..., T, D) -> einsum over T dimension
     # L: (T, T), eps: (..., T, D) -> noise: (..., T, D)
     noise = jnp.einsum("ij,...jd->...id", L, eps)
+
+    return noise
+
+
+def compute_gpr_posterior(
+    past_times: jax.Array,
+    future_times: jax.Array,
+    y_p: jax.Array,
+    kernel_type: KernelType = "SE",
+    length_scale: float = 5.0,
+    jitter: float = 1e-5,
+) -> tuple[jax.Array, jax.Array]:
+    """Compute GPR posterior mean and Cholesky factor given past executed actions.
+
+    All time points live on a shared integer grid (e.g. past=[0..P-1],
+    future=[P..P+F-1]) so the kernel sees the correct temporal distances.
+
+    Args:
+        past_times:   (P,)         integer time indices for past steps
+        future_times: (F,)         integer time indices for future steps
+        y_p:          (B, P, D)    past executed actions (normalised)
+        kernel_type:  "SE"/"OU"/"PE"
+        length_scale: kernel ℓ
+        jitter:       diagonal regularisation for Cholesky stability
+
+    Returns:
+        mu    (B, F, D)   posterior mean  μ_{f|p} = Σ_fp Σ_pp⁻¹ y_p
+        L_ff  (F, F)      lower Cholesky of posterior covariance Σ_{f|p}
+    """
+    P = past_times.shape[0]
+    F = future_times.shape[0]
+
+    # --- Build kernel matrices (batch-independent) ---
+    # Shape helpers: (P,1)x(1,P), (F,1)x(1,F), (F,1)x(1,P)
+    tp_i, tp_j = past_times[:, None].astype(jnp.float32), past_times[None, :].astype(jnp.float32)
+    tf_i, tf_j = future_times[:, None].astype(jnp.float32), future_times[None, :].astype(jnp.float32)
+    tp_col, tf_row = past_times[None, :].astype(jnp.float32), future_times[:, None].astype(jnp.float32)
+
+    if kernel_type == "SE":
+        K_pp = squared_exponential_kernel(tp_i, tp_j, length_scale)   # (P, P)
+        K_ff = squared_exponential_kernel(tf_i, tf_j, length_scale)   # (F, F)
+        K_fp = squared_exponential_kernel(tf_row, tp_col, length_scale)  # (F, P)
+    elif kernel_type == "OU":
+        K_pp = ornstein_uhlenbeck_kernel(tp_i, tp_j, length_scale)
+        K_ff = ornstein_uhlenbeck_kernel(tf_i, tf_j, length_scale)
+        K_fp = ornstein_uhlenbeck_kernel(tf_row, tp_col, length_scale)
+    elif kernel_type == "PE":
+        K_pp = periodic_kernel(tp_i, tp_j, length_scale)
+        K_ff = periodic_kernel(tf_i, tf_j, length_scale)
+        K_fp = periodic_kernel(tf_row, tp_col, length_scale)
+    else:
+        raise ValueError(f"Unknown kernel_type: {kernel_type!r}. Choose from 'SE', 'OU', 'PE'.")
+
+    K_pp = K_pp + jitter * jnp.eye(P)
+    K_ff = K_ff + jitter * jnp.eye(F)
+
+    # --- Cholesky solve: Σ_pp⁻¹ y_p  (numerically stable) ---
+    # L_pp: (P, P),  solve via triangular systems
+    L_pp = jnp.linalg.cholesky(K_pp)  # (P, P)
+
+    # alpha = Σ_pp⁻¹ y_p, computed per-batch via two triangular solves
+    # y_p: (B, P, D) -> alpha: (B, P, D)
+    # Using jnp.linalg.solve on batched y_p:
+    #   K_pp @ alpha = y_p  =>  we need to broadcast K_pp (P,P) over batch
+    alpha = jnp.linalg.solve(K_pp, y_p)  # (B, P, D)  — JAX broadcasts (P,P) x (B,P,D)
+
+    # --- Posterior mean: μ_{f|p} = K_fp @ alpha ---
+    # K_fp: (F, P),  alpha: (B, P, D)  ->  mu: (B, F, D)
+    mu = jnp.einsum("fp,bpd->bfd", K_fp, alpha)
+
+    # --- Posterior covariance: Σ_{f|p} = K_ff - K_fp Σ_pp⁻¹ K_pf ---
+    # K_pf = K_fp.T,  K_fp Σ_pp⁻¹ K_pf computed via Cholesky:
+    #   V = L_pp⁻¹ K_pf  =>  K_fp Σ_pp⁻¹ K_pf = V.T V
+    V = jnp.linalg.solve(L_pp, K_fp.T)  # (P, F)
+    Sigma_ff = K_ff - V.T @ V           # (F, F)
+
+    # Cholesky for sampling
+    L_ff = jnp.linalg.cholesky(Sigma_ff)  # (F, F)
+
+    return mu, L_ff
+
+
+def sample_gpr_noise(
+    rng: jax.Array,
+    y_p: jax.Array,
+    past_horizon: int,
+    action_horizon: int,
+    kernel_type: KernelType = "SE",
+    length_scale: float = 5.0,
+    jitter: float = 1e-5,
+) -> jax.Array:
+    """Sample initial noise from the GPR posterior conditioned on past actions.
+
+    Replaces unconditional GP sampling with a data-conditioned distribution:
+        x_0 ~ N(μ_{f|p}, Σ_{f|p})
+    where μ and Σ are determined by the GP kernel and the observed y_p.
+
+    This ensures the noise starting point is informed by the previous chunk's
+    executed trajectory, achieving cross-chunk temporal continuity.
+
+    Training and inference use the identical formula (no train-inference gap).
+
+    Args:
+        rng:           JAX random key
+        y_p:           (B, P, D)  past executed actions, where P = past_horizon
+        past_horizon:  number of past steps P (e.g. 15)
+        action_horizon: number of future steps F (e.g. 50)
+        kernel_type:   "SE" (recommended), "OU", or "PE"
+        length_scale:  GP kernel ℓ; controls how far past influences future
+        jitter:        diagonal regularisation for numerical stability
+
+    Returns:
+        noise (B, action_horizon, D)  — GPR-conditioned initial noise
+    """
+    # Time grid: past=[0..P-1], future=[P..P+F-1]
+    past_times   = jnp.arange(past_horizon, dtype=jnp.float32)
+    future_times = jnp.arange(past_horizon, past_horizon + action_horizon, dtype=jnp.float32)
+
+    mu, L_ff = compute_gpr_posterior(
+        past_times, future_times, y_p,
+        kernel_type=kernel_type,
+        length_scale=length_scale,
+        jitter=jitter,
+    )
+
+    # Sample: x_0 = μ + L_ff @ ε,  ε ~ N(0, I)
+    # mu: (B, F, D),  L_ff: (F, F)
+    batch_size = y_p.shape[0]
+    D = y_p.shape[2]
+    eps = jax.random.normal(rng, (batch_size, action_horizon, D))
+    noise = mu + jnp.einsum("ij,bjd->bid", L_ff, eps)
 
     return noise

@@ -155,6 +155,35 @@ class LeRobotIndexWrapper:
         return len(self.dataset)
 
 
+class MergePrevActionKeys:
+    """Transform that merges raw past-action tensors (loaded via negative delta_timestamps)
+    into a single 'prev_action' key of shape (P, D) in the sample dict.
+
+    LeRobot loads each key specified in delta_timestamps as (num_steps, D).
+    When prev_action_sequence_keys produces overlapping (same) key as action_sequence_keys,
+    LeRobot returns both the future (positive timestamps) and past (negative timestamps)
+    into the same tensor — shaped (P+F, D). We distinguish by slicing.
+
+    In the simple case (one past key, one future key, DIFFERENT names), no slicing needed.
+    """
+
+    def __init__(self, prev_action_keys: list[str]):
+        self._keys = prev_action_keys
+
+    def __call__(self, data: dict) -> dict:
+        import numpy as np
+        arrays = []
+        for key in self._keys:
+            if key in data:
+                arr = np.asarray(data[key])  # (P, D)
+                arrays.append(arr)
+        if arrays:
+            # If multiple keys, stack and average; single key is the common case.
+            prev_action = np.mean(arrays, axis=0)  # (P, D)
+            data["prev_action"] = prev_action
+        return data
+
+
 def create_torch_dataset(
     data_config: _config.DataConfig, action_horizon: int, model_config: _model.BaseModelConfig
 ) -> Dataset:
@@ -166,20 +195,40 @@ def create_torch_dataset(
         return FakeDataset(model_config, num_samples=1024)
 
     dataset_meta = lerobot_dataset.LeRobotDatasetMetadata(repo_id)
+
+    # Build delta_timestamps dict: future action sequence keys at [0..action_horizon-1]
+    delta_timestamps = {
+        key: [t / dataset_meta.fps for t in range(action_horizon)]
+        for key in data_config.action_sequence_keys
+    }
+
+    # If GPR prev_action loading is requested, add negative timestamps for past steps.
+    # These will appear in the sample under the raw LeRobot key name.
+    if data_config.prev_action_sequence_keys:
+        past_horizon = data_config.gpr_past_horizon
+        for key in data_config.prev_action_sequence_keys:
+            # Negative timestamps: -P/fps .. -1/fps  (the most recent past step is at t=-1/fps)
+            delta_timestamps[key] = [t / dataset_meta.fps for t in range(-past_horizon, 0)]
+
     dataset = lerobot_dataset.LeRobotDataset(
         data_config.repo_id,
-        delta_timestamps={
-            key: [t / dataset_meta.fps for t in range(action_horizon)] for key in data_config.action_sequence_keys
-        },
+        delta_timestamps=delta_timestamps,
     )
 
     # Wrap to inject episode_index and frame_index
     dataset = LeRobotIndexWrapper(dataset)
-    
+
     transforms_to_apply = []
     if data_config.prompt_from_task:
         transforms_to_apply.append(_transforms.PromptFromLeRobotTask(dataset_meta.tasks))
-    
+
+    # If prev_action_sequence_keys is set, merge past tensors into a 'prev_action' key.
+    # LeRobot returns each key as (P, D); we average multiple keys if needed (single key typical).
+    if data_config.prev_action_sequence_keys:
+        transforms_to_apply.append(
+            MergePrevActionKeys(list(data_config.prev_action_sequence_keys))
+        )
+
     if transforms_to_apply:
         dataset = TransformedDataset(dataset, transforms_to_apply)
 
@@ -572,4 +621,10 @@ class DataLoaderImpl(DataLoader):
 
     def __iter__(self):
         for batch in self._data_loader:
-            yield _model.Observation.from_dict(batch), batch["actions"]
+            obs = _model.Observation.from_dict(batch)
+            # Inject prev_action for GPR conditioning if present in batch.
+            # This is populated by MergePrevActionKeys when DataConfig.prev_action_sequence_keys is set.
+            if "prev_action" in batch:
+                import dataclasses
+                obs = dataclasses.replace(obs, prev_action=batch["prev_action"])
+            yield obs, batch["actions"]

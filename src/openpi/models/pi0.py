@@ -200,8 +200,22 @@ class Pi0(_model.BaseModel):
 
         batch_shape = actions.shape[:-2]
 
-        # --- Noise sampling: i.i.d. Gaussian or GP prior ---
-        if self._config.use_gp_prior:
+        # --- Noise sampling: GPR > GP prior > i.i.d. Gaussian ---
+        # GPR: conditioned on prev_action (previous chunk's executed actions).
+        #      Achieves cross-chunk temporal continuity. Mutually exclusive with OT.
+        if self._config.use_gpr and observation.prev_action is not None:
+            # y_p: take last `gpr_past_horizon` steps from prev_action
+            # prev_action shape: (B, ah, ad); we want (B, P, ad) with P=gpr_past_horizon
+            y_p = observation.prev_action[:, -self._config.gpr_past_horizon:, :]
+            noise = _gp_utils.sample_gpr_noise(
+                noise_rng,
+                y_p,
+                past_horizon=self._config.gpr_past_horizon,
+                action_horizon=self.action_horizon,
+                kernel_type=self._config.gp_kernel_type,
+                length_scale=self._config.gp_length_scale,
+            )
+        elif self._config.use_gp_prior:
             noise = _gp_utils.sample_gp_noise(
                 noise_rng,
                 actions.shape,
@@ -215,6 +229,7 @@ class Pi0(_model.BaseModel):
         # --- OT coupling: re-pair noise with actions within the batch ---
         # Preserves GP temporal structure within each sample (only permutes
         # across the batch dimension) while reducing expected transport cost.
+        # NOTE: incompatible with use_gpr (enforced by Pi0Config.__post_init__)
         if self._config.use_ot_coupling and actions.ndim == 3:
             noise = _ot_utils.apply_ot_coupling(
                 actions, noise,
@@ -236,8 +251,6 @@ class Pi0(_model.BaseModel):
         (prefix_out, suffix_out), _ = self.PaliGemma.llm(
             [prefix_tokens, suffix_tokens], mask=attn_mask, positions=positions, adarms_cond=[None, adarms_cond]
         )
-        v_t = self.action_out_proj(suffix_out[:, -self.action_horizon :])
-
         v_t = self.action_out_proj(suffix_out[:, -self.action_horizon :])
 
         loss = jnp.mean(jnp.square(v_t - u_t), axis=-1)
@@ -268,7 +281,30 @@ class Pi0(_model.BaseModel):
         obs_action_horizon = _maybe_scalar(observation.action_horizon)
         obs_actions_during_latency = _maybe_scalar(observation.actions_during_latency)
         if noise is None:
-            noise = jax.random.normal(rng, (batch_size, self.action_horizon, self.action_dim))
+            if self._config.use_gpr and observation.prev_action is not None:
+                # Inference-time GPR: match training distribution exactly.
+                # prev_action provided by the inference loop from the robot's
+                # last executed chunk. Falls back to GP if unavailable (episode start).
+                y_p = observation.prev_action[:, -self._config.gpr_past_horizon:, :]
+                noise = _gp_utils.sample_gpr_noise(
+                    rng,
+                    y_p,
+                    past_horizon=self._config.gpr_past_horizon,
+                    action_horizon=self.action_horizon,
+                    kernel_type=self._config.gp_kernel_type,
+                    length_scale=self._config.gp_length_scale,
+                )
+            elif self._config.use_gp_prior:
+                # Match the training distribution: sample from the same GP used in compute_loss.
+                noise = _gp_utils.sample_gp_noise(
+                    rng,
+                    shape=(batch_size, self.action_horizon, self.action_dim),
+                    action_horizon=self.action_horizon,
+                    kernel_type=self._config.gp_kernel_type,
+                    length_scale=self._config.gp_length_scale,
+                )
+            else:
+                noise = jax.random.normal(rng, (batch_size, self.action_horizon, self.action_dim))
 
         # first fill KV cache with a forward pass of the prefix
         prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)

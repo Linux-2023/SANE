@@ -54,6 +54,14 @@ class Pi0Config(_model.BaseModelConfig):
     # Number of Sinkhorn iterations (20 is sufficient for most batch sizes).
     ot_num_iters: int = 20
 
+    # --------------- GPR (Gaussian Process Regression) settings ---------------
+    # Conditions the initial noise on the previous chunk's executed actions y_p,
+    # achieving cross-chunk temporal continuity without OT Coupling.
+    # MUTUALLY EXCLUSIVE with use_ot_coupling.
+    use_gpr: bool = False
+    # Number of past action steps to condition on (execution horizon).
+    gpr_past_horizon: int = 15
+
     def __post_init__(self):
         if self.max_token_len is None:
             object.__setattr__(self, "max_token_len", 200 if self.pi05 else 48)
@@ -76,6 +84,14 @@ class Pi0Config(_model.BaseModelConfig):
                 raise ValueError(f"ot_reg must be positive, got {self.ot_reg}")
             if self.ot_num_iters < 1:
                 raise ValueError(f"ot_num_iters must be >= 1, got {self.ot_num_iters}")
+        # GPR and OT are mutually exclusive
+        if self.use_gpr and self.use_ot_coupling:
+            raise ValueError(
+                "use_gpr and use_ot_coupling are mutually exclusive: "
+                "OT re-pairs noise across the batch, destroying GPR's per-sample conditioning."
+            )
+        if self.use_gpr and self.gpr_past_horizon <= 0:
+            raise ValueError(f"gpr_past_horizon must be positive, got {self.gpr_past_horizon}")
 
     @property
     @override

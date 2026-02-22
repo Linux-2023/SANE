@@ -88,6 +88,14 @@ class DataConfig:
     # LeRobot dataset is using different keys to represent the action.
     action_sequence_keys: Sequence[str] = ("actions",)
 
+    # If non-empty, load previous actions with negative delta_timestamps for GPR conditioning.
+    # Keys should match the action key used by the robot (e.g. "action" for LeRobot piper datasets).
+    # The loaded tensors will be stored as 'prev_action' in the batch dict and injected into
+    # Observation.prev_action for use by GPR noise sampling in compute_loss and sample_actions.
+    prev_action_sequence_keys: Sequence[str] = ()
+    # How many past steps to load for GPR conditioning (must match Pi0Config.gpr_past_horizon).
+    gpr_past_horizon: int = 15
+
     # If true, will use the LeRobot dataset task to define the prompt.
     prompt_from_task: bool = False
 
@@ -1092,9 +1100,153 @@ _CONFIGS = [
         num_train_steps=20000,
         batch_size=1,
     ),
-    #
-    # Fine-tuning DROID configs.
-    #
+    # ------------------------------------------------------------------
+    # Ablation A: GP prior only (SE kernel, length_scale=5)
+    # Compares against baseline (pi05_piper_pick_cube) to isolate GP effect.
+    # Launch: python scripts/train.py --config-name pi05_piper_pick_cube_gp --exp_name ablation_gp
+    # ------------------------------------------------------------------
+    TrainConfig(
+        name="pi05_piper_pick_cube_gp",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            advantage_input=False,
+            use_gp_prior=True,
+            gp_kernel_type="SE",
+            gp_length_scale=5.0,
+        ),
+        data=LeRobotPiperDataConfig(
+            repo_id="pick_anything_100/piper_dual_lerobot",
+            assets=AssetsConfig(
+                assets_dir="gs://openpi-assets/checkpoints/pi05_base/assets",
+                asset_id="trossen",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            repack_transforms=_transforms.Group(
+                inputs=[
+                    _transforms.RepackTransform(
+                        {
+                            "images": {
+                                "cam_high": "observation.images.cam_high",
+                                "cam_left_wrist": "observation.images.cam_left_wrist",
+                                "cam_right_wrist": "observation.images.cam_right_wrist",
+                            },
+                            "state": "observation.state",
+                            "actions": "action",
+                            "prompt": "prompt",
+                            "episode_index": "episode_index",
+                            "frame_index": "frame_index",
+                        }
+                    )
+                ]
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        pytorch_weight_path="/workspace/pjk/ELM/openpi/checkpoints/openpi/openpi-assets/checkpoints/pi05_base_pytorch",
+        num_train_steps=20000,
+        batch_size=1,
+    ),
+    # ------------------------------------------------------------------
+    # Ablation B: GP prior + OT coupling
+    # Compares against baseline and Ablation A to isolate OT effect.
+    # Launch: python scripts/train.py --config-name pi05_piper_pick_cube_gp_ot --exp_name ablation_gp_ot
+    # ------------------------------------------------------------------
+    TrainConfig(
+        name="pi05_piper_pick_cube_gp_ot",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            advantage_input=False,
+            use_gp_prior=True,
+            gp_kernel_type="SE",
+            gp_length_scale=5.0,
+            use_ot_coupling=True,
+            ot_reg=0.1,
+            ot_num_iters=50,
+        ),
+        data=LeRobotPiperDataConfig(
+            repo_id="pick_anything_100/piper_dual_lerobot",
+            assets=AssetsConfig(
+                assets_dir="gs://openpi-assets/checkpoints/pi05_base/assets",
+                asset_id="trossen",
+            ),
+            base_config=DataConfig(prompt_from_task=True),
+            repack_transforms=_transforms.Group(
+                inputs=[
+                    _transforms.RepackTransform(
+                        {
+                            "images": {
+                                "cam_high": "observation.images.cam_high",
+                                "cam_left_wrist": "observation.images.cam_left_wrist",
+                                "cam_right_wrist": "observation.images.cam_right_wrist",
+                            },
+                            "state": "observation.state",
+                            "actions": "action",
+                            "prompt": "prompt",
+                            "episode_index": "episode_index",
+                            "frame_index": "frame_index",
+                        }
+                    )
+                ]
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        pytorch_weight_path="/workspace/pjk/ELM/openpi/checkpoints/openpi/openpi-assets/checkpoints/pi05_base_pytorch",
+        num_train_steps=20000,
+        batch_size=1,
+    ),
+    # ------------------------------------------------------------------
+    # Ablation C: GPR (Gaussian Process Regression) — conditioned on prev executed chunk
+    # Noise ~ GPR posterior given previous 15 executed action steps (y_p).
+    # Achieves cross-chunk temporal coherence without OT; train and inference both use GPR.
+    # Mutually exclusive with OT coupling (config will raise if both enabled).
+    # Launch: python scripts/train.py --config-name pi05_piper_pick_cube_gpr --exp_name ablation_gpr
+    # ------------------------------------------------------------------
+    TrainConfig(
+        name="pi05_piper_pick_cube_gpr",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            advantage_input=False,
+            use_gpr=True,
+            gpr_past_horizon=15,
+            gp_kernel_type="SE",
+            gp_length_scale=5.0,
+        ),
+        data=LeRobotPiperDataConfig(
+            repo_id="pick_anything_100/piper_dual_lerobot",
+            assets=AssetsConfig(
+                assets_dir="gs://openpi-assets/checkpoints/pi05_base/assets",
+                asset_id="trossen",
+            ),
+            base_config=DataConfig(
+                prompt_from_task=True,
+                # Load past 15 steps from "action" key using negative delta_timestamps.
+                # These become Observation.prev_action (B, 15, D) for GPR conditioning.
+                prev_action_sequence_keys=("action",),
+                gpr_past_horizon=15,
+            ),
+            repack_transforms=_transforms.Group(
+                inputs=[
+                    _transforms.RepackTransform(
+                        {
+                            "images": {
+                                "cam_high": "observation.images.cam_high",
+                                "cam_left_wrist": "observation.images.cam_left_wrist",
+                                "cam_right_wrist": "observation.images.cam_right_wrist",
+                            },
+                            "state": "observation.state",
+                            "actions": "action",
+                            "prompt": "prompt",
+                            "episode_index": "episode_index",
+                            "frame_index": "frame_index",
+                        }
+                    )
+                ]
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        pytorch_weight_path="/workspace/pjk/ELM/openpi/checkpoints/openpi/openpi-assets/checkpoints/pi05_base_pytorch",
+        num_train_steps=20000,
+        batch_size=1,
+    ),
     TrainConfig(
         # This config is for fine-tuning pi0-FAST-base on the *full* DROID dataset.
         # We use RLDS data loading to make training on this large dataset tractable.
