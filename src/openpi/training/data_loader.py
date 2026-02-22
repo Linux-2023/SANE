@@ -156,29 +156,44 @@ class LeRobotIndexWrapper:
 
 
 class MergePrevActionKeys:
-    """Transform that merges raw past-action tensors (loaded via negative delta_timestamps)
-    into a single 'prev_action' key of shape (P, D) in the sample dict.
+    """Transform that extracts prev_action from the combined past+future action tensor.
 
-    LeRobot loads each key specified in delta_timestamps as (num_steps, D).
-    When prev_action_sequence_keys produces overlapping (same) key as action_sequence_keys,
-    LeRobot returns both the future (positive timestamps) and past (negative timestamps)
-    into the same tensor — shaped (P+F, D). We distinguish by slicing.
+    When prev_action_sequence_keys overlaps with action_sequence_keys (e.g. both
+    reference the LeRobot key "action"), create_torch_dataset loads them as a
+    single combined tensor of shape (P+F, D) via merged delta_timestamps:
+        indices 0..P-1  → past steps  (negative timestamps) → stored as 'prev_action'
+        indices P..P+F-1 → future steps (positive timestamps) → stored back in 'action'
 
-    In the simple case (one past key, one future key, DIFFERENT names), no slicing needed.
+    When the keys are disjoint (different names), no slicing is needed — the past tensor
+    is already stored under a separate key of shape (P, D).
     """
 
-    def __init__(self, prev_action_keys: list[str]):
-        self._keys = prev_action_keys
+    def __init__(self, prev_action_keys: list[str], action_keys: list[str],
+                 past_horizon: int, action_horizon: int):
+        self._prev_keys = prev_action_keys
+        self._action_keys = action_keys
+        self._past_horizon = past_horizon
+        self._action_horizon = action_horizon
+        self._overlapping = set(prev_action_keys) & set(action_keys)
 
     def __call__(self, data: dict) -> dict:
         import numpy as np
         arrays = []
-        for key in self._keys:
+        for key in self._prev_keys:
             if key in data:
-                arr = np.asarray(data[key])  # (P, D)
-                arrays.append(arr)
+                arr = np.asarray(data[key])  # (P+F, D) if overlapping, or (P, D)
+                if key in self._overlapping:
+                    # Combined tensor: first P steps are past, last F steps are future.
+                    past_part   = arr[:self._past_horizon]   # (P, D)
+                    future_part = arr[self._past_horizon:]   # (F, D)
+                    arrays.append(past_part)
+                    # Write the future part back under the action key.
+                    # (LeRobot may have stored the combined tensor under "action";  
+                    #  downstream RepackTransform will pick it up from there.)
+                    data[key] = future_part
+                else:
+                    arrays.append(arr)
         if arrays:
-            # If multiple keys, stack and average; single key is the common case.
             prev_action = np.mean(arrays, axis=0)  # (P, D)
             data["prev_action"] = prev_action
         return data
@@ -202,13 +217,22 @@ def create_torch_dataset(
         for key in data_config.action_sequence_keys
     }
 
-    # If GPR prev_action loading is requested, add negative timestamps for past steps.
-    # These will appear in the sample under the raw LeRobot key name.
+    # If GPR prev_action loading is requested, merge past+future timestamps.
+    # When the prev_action key is the SAME as the action key (common case: both "action"),
+    # we must combine them into one sorted list so LeRobot returns a single (P+F, D) tensor.
+    # MergePrevActionKeys will then split it into prev_action (P steps) and action (F steps).
     if data_config.prev_action_sequence_keys:
         past_horizon = data_config.gpr_past_horizon
+        overlapping = set(data_config.prev_action_sequence_keys) & set(data_config.action_sequence_keys)
         for key in data_config.prev_action_sequence_keys:
-            # Negative timestamps: -P/fps .. -1/fps  (the most recent past step is at t=-1/fps)
-            delta_timestamps[key] = [t / dataset_meta.fps for t in range(-past_horizon, 0)]
+            if key in overlapping:
+                # Merge: [-P/fps, ..., -1/fps, 0/fps, ..., (F-1)/fps] → shape (P+F, D)
+                delta_timestamps[key] = [
+                    t / dataset_meta.fps for t in range(-past_horizon, action_horizon)
+                ]
+            else:
+                # Disjoint key: only load past steps under a separate key name.
+                delta_timestamps[key] = [t / dataset_meta.fps for t in range(-past_horizon, 0)]
 
     dataset = lerobot_dataset.LeRobotDataset(
         data_config.repo_id,
@@ -222,11 +246,16 @@ def create_torch_dataset(
     if data_config.prompt_from_task:
         transforms_to_apply.append(_transforms.PromptFromLeRobotTask(dataset_meta.tasks))
 
-    # If prev_action_sequence_keys is set, merge past tensors into a 'prev_action' key.
-    # LeRobot returns each key as (P, D); we average multiple keys if needed (single key typical).
+    # If prev_action_sequence_keys is set, extract prev_action from the combined tensor.
+    # MergePrevActionKeys handles both overlapping-key and disjoint-key cases.
     if data_config.prev_action_sequence_keys:
         transforms_to_apply.append(
-            MergePrevActionKeys(list(data_config.prev_action_sequence_keys))
+            MergePrevActionKeys(
+                prev_action_keys=list(data_config.prev_action_sequence_keys),
+                action_keys=list(data_config.action_sequence_keys),
+                past_horizon=data_config.gpr_past_horizon,
+                action_horizon=action_horizon,
+            )
         )
 
     if transforms_to_apply:
