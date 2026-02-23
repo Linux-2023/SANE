@@ -87,6 +87,10 @@ class PiperInputs(transforms.DataTransformFn):
         if "rtc_obs" in data:
             inputs["rtc_obs"] = data["rtc_obs"].copy()
         
+        # Preserve standalone prev_action for GPR noise conditioning (non-RTC mode)
+        if "prev_action" in data:
+            inputs["prev_action"] = data["prev_action"]
+        
         if "advantage" in data:
             inputs["advantage"] = data["advantage"]
 

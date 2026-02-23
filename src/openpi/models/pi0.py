@@ -205,7 +205,8 @@ class Pi0(_model.BaseModel):
         #      Achieves cross-chunk temporal continuity. Mutually exclusive with OT.
         if self._config.use_gpr and observation.prev_action is not None:
             # y_p: take last `gpr_past_horizon` steps from prev_action
-            # prev_action shape: (B, ah, ad); we want (B, P, ad) with P=gpr_past_horizon
+            # prev_action shape: (B, P, ad_raw) where ad_raw is robot action dim (e.g. 14)
+            # actions shape: (B, ah, ad_model) where ad_model is model action dim (e.g. 32)
             y_p = observation.prev_action[:, -self._config.gpr_past_horizon:, :]
             noise = _gp_utils.sample_gpr_noise(
                 noise_rng,
@@ -215,6 +216,12 @@ class Pi0(_model.BaseModel):
                 kernel_type=self._config.gp_kernel_type,
                 length_scale=self._config.gp_length_scale,
             )
+            # Pad GPR noise to match model action_dim (e.g. 14 → 32)
+            # prev_action is raw robot-space actions, actions is zero-padded to model dim
+            if noise.shape[-1] < actions.shape[-1]:
+                pad_width = actions.shape[-1] - noise.shape[-1]
+                noise = jnp.pad(noise, ((0, 0), (0, 0), (0, pad_width)))
+
         elif self._config.use_gp_prior:
             noise = _gp_utils.sample_gp_noise(
                 noise_rng,
