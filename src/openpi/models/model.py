@@ -135,8 +135,9 @@ class Observation(Generic[ArrayT]):
             action_horizon = data["rtc_obs"]["s"]
             actions_during_latency = data["rtc_obs"]["d"]
         else:
-            prev_state = None
-            prev_action = None
+            # Support standalone prev_action for GPR noise sampling without full RTC
+            prev_state = data.get("prev_state")
+            prev_action = data.get("prev_action")
             action_horizon = None
             actions_during_latency = None
             

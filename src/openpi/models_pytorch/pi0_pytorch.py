@@ -8,6 +8,7 @@ import torch.nn.functional as F  # noqa: N812
 
 import openpi.models.gemma as _gemma
 from openpi.models_pytorch.gemma_pytorch import PaliGemmaWithExpertModel
+import openpi.models_pytorch.gp_utils_pytorch as _gp_utils_pt
 import openpi.models_pytorch.preprocessing_pytorch as _preprocessing
 
 
@@ -380,11 +381,44 @@ class PI0Pytorch(nn.Module):
     def sample_actions(self, device, observation, noise=None, num_steps=10) -> Tensor:
         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
         bsize = observation.state.shape[0]
+
+        # Preprocess observation first so prev_action is available for GPR noise conditioning
+        images, img_masks, lang_tokens, lang_masks, state, prev_state, prev_action, action_horizon, actions_during_latency = self._preprocess_observation(observation, train=False)
+
         if noise is None:
             actions_shape = (bsize, self.config.action_horizon, self.config.action_dim)
-            noise = self.sample_noise(actions_shape, device)
-
-        images, img_masks, lang_tokens, lang_masks, state, prev_state, prev_action, action_horizon, actions_during_latency = self._preprocess_observation(observation, train=False)
+            print(f"[GPR DEBUG] use_gpr={self.config.use_gpr}, prev_action is None: {prev_action is None}")
+            if prev_action is not None:
+                print(f"[GPR DEBUG] prev_action shape: {prev_action.shape}")    
+            if self.config.use_gpr and prev_action is not None:
+                # GPR: condition noise on past executed actions (matches JAX pi0.py L284-296)
+                # Client sends the full 50-step predicted chunk from last inference.
+                # Only the first gpr_past_horizon steps were actually executed by the robot,
+                # so we use [:, :gpr_past_horizon, :] (not [-gpr_past_horizon:]).
+                y_p = prev_action[:, :self.config.gpr_past_horizon, :]
+                noise = _gp_utils_pt.sample_gpr_noise(
+                    y_p,
+                    past_horizon=self.config.gpr_past_horizon,
+                    action_horizon=self.config.action_horizon,
+                    kernel_type=self.config.gp_kernel_type,
+                    length_scale=self.config.gp_length_scale,
+                )
+                # Pad GPR noise to model action_dim if needed
+                # (y_p is raw robot-space 14-dim; model expects 32-dim)
+                if noise.shape[-1] < self.config.action_dim:
+                    pad_size = self.config.action_dim - noise.shape[-1]
+                    noise = torch.nn.functional.pad(noise, (0, pad_size))
+            elif self.config.use_gp_prior:
+                # Unconditional GP noise (matches JAX pi0.py L297-305)
+                noise = _gp_utils_pt.sample_gp_noise(
+                    shape=actions_shape,
+                    action_horizon=self.config.action_horizon,
+                    kernel_type=self.config.gp_kernel_type,
+                    length_scale=self.config.gp_length_scale,
+                    device=device,
+                )
+            else:
+                noise = self.sample_noise(actions_shape, device)
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, lang_tokens, lang_masks)
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
@@ -425,10 +459,11 @@ class PI0Pytorch(nn.Module):
                     input_x_t,
                     current_timestep,
                 )
-            if prev_action is None:
+            if actions_during_latency is None:
+                # GPR-only mode OR no prev_action: use standard denoising
                 v_t = denoise_step_partial_call(x_t, expanded_time)
             else:
-                # v_t = denoise_step_partial_call(x_t, expanded_time)
+                # Full RTC mode: prev_action + action_horizon both provided
                 # Convert to Python int if they are Tensor
                 inference_delay = actions_during_latency
                 if inference_delay is not None:
@@ -439,11 +474,10 @@ class PI0Pytorch(nn.Module):
                 
                 prev_chunk_left_over = prev_action
                 execution_horizon = action_horizon
-                if execution_horizon is not None:
-                    if isinstance(execution_horizon, Tensor):
-                        execution_horizon = int(execution_horizon.item() if execution_horizon.numel() == 1 else execution_horizon[0].item())
-                    else:
-                        execution_horizon = int(execution_horizon)
+                if isinstance(execution_horizon, Tensor):
+                    execution_horizon = int(execution_horizon.item() if execution_horizon.numel() == 1 else execution_horizon[0].item())
+                else:
+                    execution_horizon = int(execution_horizon)
                 
                 v_t = self.denoise_step_rtc(
                     x_t=x_t,
@@ -459,7 +493,7 @@ class PI0Pytorch(nn.Module):
             # Euler step - use new tensor assignment instead of in-place operation
             x_t = x_t + dt * v_t
             time += dt
-        if prev_action is not None:
+        if actions_during_latency is not None and prev_action is not None:
             error = prev_action[0, :actions_during_latency, ...] - x_t[0, :actions_during_latency, ...]
             print(f"overlap part error: {error.norm()}")
         return x_t
