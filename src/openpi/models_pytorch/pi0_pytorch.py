@@ -172,6 +172,9 @@ class PI0Pytorch(nn.Module):
             getattr(observation, "prev_action", None),
             getattr(observation, "action_horizon", None),
             getattr(observation, "actions_during_latency", None),
+            # gpr_prev_action: set only when RTC+GPR are both active (from obs['prev_action']).
+            # In non-RTC mode this is None and prev_action is used for GPR instead.
+            getattr(observation, "gpr_prev_action", None),
         )
 
     def sample_noise(self, shape, device):
@@ -320,7 +323,7 @@ class PI0Pytorch(nn.Module):
 
     def forward(self, observation, actions, noise=None, time=None) -> Tensor:
         """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
-        images, img_masks, lang_tokens, lang_masks, state, prev_state, prev_action, action_horizon, actions_during_latency = self._preprocess_observation(observation, train=True)
+        images, img_masks, lang_tokens, lang_masks, state, prev_state, prev_action, action_horizon, actions_during_latency, _gpr_prev_action = self._preprocess_observation(observation, train=True)
 
         if noise is None:
             noise = self.sample_noise(actions.shape, actions.device)
@@ -383,19 +386,25 @@ class PI0Pytorch(nn.Module):
         bsize = observation.state.shape[0]
 
         # Preprocess observation first so prev_action is available for GPR noise conditioning
-        images, img_masks, lang_tokens, lang_masks, state, prev_state, prev_action, action_horizon, actions_during_latency = self._preprocess_observation(observation, train=False)
+        images, img_masks, lang_tokens, lang_masks, state, prev_state, prev_action, action_horizon, actions_during_latency, gpr_prev_action = self._preprocess_observation(observation, train=False)
 
         if noise is None:
             actions_shape = (bsize, self.config.action_horizon, self.config.action_dim)
-            print(f"[GPR DEBUG] use_gpr={self.config.use_gpr}, prev_action is None: {prev_action is None}")
-            if prev_action is not None:
-                print(f"[GPR DEBUG] prev_action shape: {prev_action.shape}")    
-            if self.config.use_gpr and prev_action is not None:
-                # GPR: condition noise on past executed actions (matches JAX pi0.py L284-296)
-                # Client sends the full 50-step predicted chunk from last inference.
-                # Only the first gpr_past_horizon steps were actually executed by the robot,
-                # so we use [:, :gpr_past_horizon, :] (not [-gpr_past_horizon:]).
-                y_p = prev_action[:, :self.config.gpr_past_horizon, :]
+            # GPR 数据源：优先使用 gpr_prev_action（执行历史快照，来自 obs['prev_action']），
+            # 非 RTC 模式下 gpr_prev_action=None，回退到 prev_action。
+            gpr_src = gpr_prev_action if gpr_prev_action is not None else prev_action
+            if self.config.use_gpr and gpr_src is not None:
+                # GPR: condition noise on executed action history (gpr_prev_action from obs['prev_action']).
+                # In RTC mode, gpr_prev_action = pre-slicer snapshot (gpr_prev_actions); in non-RTC mode
+                # gpr_prev_action is None and prev_action is used as fallback.
+                y_p = gpr_src[:, :self.config.gpr_past_horizon, :]
+            elif self.config.use_gpr:
+                # GPR cold start: no prior chunk yet → neutral zero prior.
+                y_p = torch.zeros(
+                    bsize, self.config.gpr_past_horizon, self.config.action_dim,
+                    dtype=torch.float32, device=device
+                )
+            if self.config.use_gpr:
                 noise = _gp_utils_pt.sample_gpr_noise(
                     y_p,
                     past_horizon=self.config.gpr_past_horizon,
@@ -403,11 +412,8 @@ class PI0Pytorch(nn.Module):
                     kernel_type=self.config.gp_kernel_type,
                     length_scale=self.config.gp_length_scale,
                 )
-                # Pad GPR noise to model action_dim if needed
-                # (y_p is raw robot-space 14-dim; model expects 32-dim)
-                if noise.shape[-1] < self.config.action_dim:
-                    pad_size = self.config.action_dim - noise.shape[-1]
-                    noise = torch.nn.functional.pad(noise, (0, pad_size))
+                # gpr_src is delta+normalized+padded to 32-dim via transforms,
+                # so noise is already the correct shape — no extra pad needed.
             elif self.config.use_gp_prior:
                 # Unconditional GP noise (matches JAX pi0.py L297-305)
                 noise = _gp_utils_pt.sample_gp_noise(

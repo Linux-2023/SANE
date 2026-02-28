@@ -115,6 +115,10 @@ class Observation(Generic[ArrayT]):
     prev_action: at.Float[ArrayT, "*b ah ad"] | None = None
     action_horizon: at.Int[ArrayT, "*b"] | None = None
     actions_during_latency: at.Int[ArrayT, "*b"] | None = None
+    # Standalone prev_action for GPR noise sampling (separate from RTC prev_action).
+    # When both RTC and GPR are active, prev_action = RTC leftover chunk,
+    # gpr_prev_action = executed history for GPR conditioning.
+    gpr_prev_action: at.Float[ArrayT, "*b ah ad"] | None = None
 
     @classmethod
     def from_dict(cls, data: at.PyTree[ArrayT]) -> "Observation[ArrayT]":
@@ -131,16 +135,21 @@ class Observation(Generic[ArrayT]):
         # Previous state and action for RTC.
         if "rtc_obs" in data:
             prev_state = data["rtc_obs"]["prev_state"]
-            prev_action = data["rtc_obs"]["prev_action"]
+            prev_action = data["rtc_obs"]["prev_action"]   # RTC: leftover chunk
             action_horizon = data["rtc_obs"]["s"]
             actions_during_latency = data["rtc_obs"]["d"]
+            # GPR: standalone prev_action (executed history) separate from RTC leftover.
+            # Client sends obs['prev_action'] = full 50-step raw 14-dim for GPR y_p,
+            # while obs['rtc_obs']['prev_action'] = [zeros(d), chunk[d:]] for RTC guidance.
+            gpr_prev_action = data.get("prev_action")
         else:
-            # Support standalone prev_action for GPR noise sampling without full RTC
+            # Non-RTC: standalone prev_action serves both GPR and (if needed) RTC.
             prev_state = data.get("prev_state")
             prev_action = data.get("prev_action")
             action_horizon = None
             actions_during_latency = None
-            
+            gpr_prev_action = None  # prev_action itself is used for GPR in sample_actions
+
         return cls(
             images=data["image"],
             image_masks=data["image_mask"],
@@ -153,6 +162,7 @@ class Observation(Generic[ArrayT]):
             prev_action=prev_action,
             action_horizon=action_horizon,
             actions_during_latency=actions_during_latency,
+            gpr_prev_action=gpr_prev_action,
             episode_index=data.get("episode_index"),
             frame_index=data.get("frame_index"),
         )

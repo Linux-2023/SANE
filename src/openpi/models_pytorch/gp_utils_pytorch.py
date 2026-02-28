@@ -186,6 +186,12 @@ def compute_gpr_posterior(
     V = torch.linalg.solve(L_pp, K_fp.T)  # (P, F)
     Sigma_ff = K_ff - V.T @ V              # (F, F)
 
+    # Add extra jitter to ensure Sigma_ff is positive definite for Cholesky.
+    # With real robot data, Sigma_ff diagonal can be ~1e-3, so jitter=1e-5 is
+    # insufficient. Use 1e-3 to match the JAX training fix.
+    extra_jitter = 1e-3
+    Sigma_ff = Sigma_ff + extra_jitter * torch.eye(F, dtype=torch.float64, device=device)
+
     # Cholesky for sampling
     L_ff = torch.linalg.cholesky(Sigma_ff)  # (F, F)
 

@@ -140,12 +140,18 @@ class Normalize(DataTransformFn):
                 strict=self.strict,
             )
 
-        return apply_tree(
+        result = apply_tree(
             data,
             self.norm_stats,
             self._normalize_quantile if self.use_quantiles else self._normalize,
             strict=self.strict,
         )
+        # Normalize standalone prev_action using actions norm stats so it matches
+        # the same space as delta+normalized actions used for GPR conditioning.
+        if "prev_action" in data and "actions" in self.norm_stats:
+            normalize_fn = self._normalize_quantile if self.use_quantiles else self._normalize
+            result["prev_action"] = normalize_fn(data["prev_action"], self.norm_stats["actions"])
+        return result
 
     def _normalize(self, x, stats: NormStats):
         mean, std = stats.mean[..., : x.shape[-1]], stats.std[..., : x.shape[-1]]
@@ -608,14 +614,26 @@ class DeltaActions(DataTransformFn):
     mask: Sequence[bool] | None
 
     def __call__(self, data: DataDict) -> DataDict:
-        if "actions" not in data or self.mask is None:
+        if self.mask is None:
             return data
 
-        state, actions = data["state"], data["actions"]
         mask = np.asarray(self.mask)
         dims = mask.shape[-1]
-        actions[..., :dims] -= np.expand_dims(np.where(mask, state[..., :dims], 0), axis=-2)
-        data["actions"] = actions
+        state = data["state"]
+
+        # Apply delta to actions (training only - actions not present at inference)
+        if "actions" in data:
+            actions = data["actions"]
+            actions[..., :dims] -= np.expand_dims(np.where(mask, state[..., :dims], 0), axis=-2)
+            data["actions"] = actions
+
+        # Apply same delta to standalone prev_action independently of actions presence.
+        # This MUST run at both training AND inference (GPR needs y_p in delta space).
+        # Mirrors DeltaActions_Prev which does the same for rtc_obs["prev_action"].
+        if "prev_action" in data:
+            prev_actions = np.array(data["prev_action"], dtype=np.float32)
+            prev_actions[..., :dims] -= np.expand_dims(np.where(mask, state[..., :dims], 0), axis=-2)
+            data["prev_action"] = prev_actions
 
         return data
 
@@ -764,6 +782,9 @@ class PadStatesAndActions(DataTransformFn):
         data["state"] = pad_to_dim(data["state"], self.model_action_dim, axis=-1)
         if "actions" in data:
             data["actions"] = pad_to_dim(data["actions"], self.model_action_dim, axis=-1)
+        # Pad standalone prev_action to model_action_dim so GPR noise output is correct dim.
+        if "prev_action" in data:
+            data["prev_action"] = pad_to_dim(np.asarray(data["prev_action"], dtype=np.float32), self.model_action_dim, axis=-1)
         return data
 
 @dataclasses.dataclass(frozen=True)

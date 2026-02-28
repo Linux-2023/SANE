@@ -1115,7 +1115,7 @@ _CONFIGS = [
             gp_length_scale=5.0,
         ),
         data=LeRobotPiperDataConfig(
-            repo_id="pick_anything_100/piper_dual_lerobot",
+            repo_id="towel_200",
             assets=AssetsConfig(
                 assets_dir="gs://openpi-assets/checkpoints/pi05_base/assets",
                 asset_id="trossen",
@@ -1211,7 +1211,7 @@ _CONFIGS = [
             gp_length_scale=5.0,
         ),
         data=LeRobotPiperDataConfig(
-            repo_id="pick_anything_100/piper_dual_lerobot",
+            repo_id="pick_100",
             assets=AssetsConfig(
                 assets_dir="gs://openpi-assets/checkpoints/pi05_base/assets",
                 asset_id="trossen",
@@ -1237,6 +1237,7 @@ _CONFIGS = [
                             "prompt": "prompt",
                             "episode_index": "episode_index",
                             "frame_index": "frame_index",
+                            "prev_action": "prev_action", 
                         }
                     )
                 ]

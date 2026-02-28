@@ -174,4 +174,5 @@ def preprocess_observation_pytorch(
         prev_action=observation.prev_action,
         action_horizon=observation.action_horizon,
         actions_during_latency=observation.actions_during_latency,
+        gpr_prev_action=getattr(observation, "gpr_prev_action", None),
     )
