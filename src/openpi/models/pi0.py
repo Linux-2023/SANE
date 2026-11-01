@@ -12,6 +12,7 @@ from openpi.models import model as _model
 from openpi.models import pi0_config
 from openpi.models import gp_utils as _gp_utils
 from openpi.models import ot_utils as _ot_utils
+from openpi.models import rtc_training as _rtc_training
 import openpi.models.gemma as _gemma
 import openpi.models.siglip as _siglip
 from openpi.shared import array_typing as at
@@ -144,12 +145,13 @@ class Pi0(_model.BaseModel):
 
     @at.typecheck
     def embed_suffix(
-        self, obs: _model.Observation, noisy_actions: _model.Actions, timestep: at.Float[at.Array, " b"]
+        self, obs: _model.Observation, noisy_actions: _model.Actions,
+        timestep: at.Float[at.Array, " b"] | at.Float[at.Array, "b s"],
     ) -> tuple[
         at.Float[at.Array, "b s emb"],
         at.Bool[at.Array, "b s"],
         at.Bool[at.Array, " s"],
-        at.Float[at.Array, "b emb"] | None,
+        at.Float[at.Array, "b emb"] | at.Float[at.Array, "b s emb"] | None,
     ]:
         input_mask = []
         ar_mask = []
@@ -164,7 +166,9 @@ class Pi0(_model.BaseModel):
 
         action_tokens = self.action_in_proj(noisy_actions)
         # embed timestep using sine-cosine positional encoding with sensitivity in the range [0, 1]
-        time_emb = posemb_sincos(timestep, self.action_in_proj.out_features, min_period=4e-3, max_period=4.0)
+        time_emb = posemb_sincos(timestep.reshape(-1), self.action_in_proj.out_features, min_period=4e-3, max_period=4.0)
+        if timestep.ndim == 2:
+            time_emb = time_emb.reshape(*timestep.shape, -1)
         if self.pi05:
             # time MLP (for adaRMS)
             time_emb = self.time_mlp_in(time_emb)
@@ -239,13 +243,26 @@ class Pi0(_model.BaseModel):
                 num_iters=self._config.ot_num_iters,
             )
         time = jax.random.beta(time_rng, 1.5, 1, batch_shape) * 0.999 + 0.001
-        time_expanded = time[..., None, None]
-        x_t = time_expanded * noise + (1 - time_expanded) * actions
+        if self._config.train_time_rtc:
+            if observation.action_is_pad is None:
+                raise ValueError("Training-time RTC requires the LeRobot action_is_pad mask.")
+            x_t, model_time, rtc_suffix_mask = _rtc_training.training_inputs(
+                jax.random.fold_in(rng, 0x525443),
+                actions,
+                noise,
+                time,
+                max_prefix_frac=self._config.train_time_rtc_max_prefix_frac,
+                prefix_drop_p=self._config.train_time_rtc_prefix_drop_p,
+            )
+        else:
+            time_expanded = time[..., None, None]
+            x_t = time_expanded * noise + (1 - time_expanded) * actions
+            model_time = time
         u_t = noise - actions
 
         # one big forward pass of prefix + suffix at once
         prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
-        suffix_tokens, suffix_mask, suffix_ar_mask, adarms_cond = self.embed_suffix(observation, x_t, time)
+        suffix_tokens, suffix_mask, suffix_ar_mask, adarms_cond = self.embed_suffix(observation, x_t, model_time)
         input_mask = jnp.concatenate([prefix_mask, suffix_mask], axis=1)
         ar_mask = jnp.concatenate([prefix_ar_mask, suffix_ar_mask], axis=0)
         attn_mask = make_attn_mask(input_mask, ar_mask)
@@ -255,7 +272,13 @@ class Pi0(_model.BaseModel):
         )
         v_t = self.action_out_proj(suffix_out[:, -self.action_horizon :])
 
-        loss = jnp.mean(jnp.square(v_t - u_t), axis=-1)
+        if self._config.train_time_rtc:
+            loss = _rtc_training.masked_flow_loss(
+                v_t, u_t, rtc_suffix_mask, observation.action_is_pad,
+                action_dim=self._config.train_time_rtc_action_dim or self.action_dim,
+            )
+        else:
+            loss = jnp.mean(jnp.square(v_t - u_t), axis=-1)
         if return_aux:
             return loss, {"noise": noise, "time": time}
         return loss

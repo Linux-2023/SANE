@@ -33,6 +33,12 @@ class Pi0Config(_model.BaseModelConfig):
     discrete_state_input: bool = None  # type: ignore
     advantage_input: bool = False
 
+    # Training-time RTC conditions the action expert on clean action prefixes.
+    train_time_rtc: bool = False
+    train_time_rtc_max_prefix_frac: float = 0.3
+    train_time_rtc_prefix_drop_p: float = 0.25
+    train_time_rtc_action_dim: int | None = None
+
     # --------------- Gaussian Process prior settings ---------------
     # When enabled, replaces i.i.d. Gaussian noise with GP-structured noise
     # that introduces temporal correlations across the action horizon.
@@ -67,6 +73,15 @@ class Pi0Config(_model.BaseModelConfig):
             object.__setattr__(self, "max_token_len", 200 if self.pi05 else 48)
         if self.discrete_state_input is None:
             object.__setattr__(self, "discrete_state_input", self.pi05)
+        if self.train_time_rtc:
+            if not self.pi05:
+                raise ValueError("Training-time RTC requires pi05 adaptive timestep conditioning.")
+            if not 0.0 <= self.train_time_rtc_max_prefix_frac <= 1.0:
+                raise ValueError("RTC max prefix fraction must be between 0 and 1.")
+            if not 0.0 <= self.train_time_rtc_prefix_drop_p <= 1.0:
+                raise ValueError("RTC prefix dropout probability must be between 0 and 1.")
+            if self.train_time_rtc_action_dim is not None and not 1 <= self.train_time_rtc_action_dim <= self.action_dim:
+                raise ValueError("RTC supervised action dimension must be between 1 and action_dim.")
         # Validate GP settings
         if self.use_gp_prior:
             valid_kernels = ("SE", "OU", "PE")

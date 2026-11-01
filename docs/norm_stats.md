@@ -67,3 +67,81 @@ General info for Pi robots:
 - Control frequencies are either 20 Hz for UR5e and Franka, and 50 Hz for ARX and Trossen (ALOHA) arms.
 
 For DROID, we use the original DROID action configuration, with joint velocity actions in the first 7 dimensions and gripper actions in the 8th dimension + a control frequency of 15 Hz.
+
+## Piper dual tidy_desk Training-RTC (pi0.5)
+
+The `pi05_piper_dual_tidy_desk_ros2_shifted_training_rtc` preset and its JAX
+training implementation are included in `main`; no separate patch is required.
+Other presets keep Training-RTC disabled by default.
+
+### Data and objective
+
+- Dataset: [`HITdongdong/piper_dual_tidy_desk_ros2_shifted`](https://huggingface.co/datasets/HITdongdong/piper_dual_tidy_desk_ros2_shifted),
+  revision `1a127a8d018c7cbf1afacc92dc7dcaaf510ee7272`: 50 episodes,
+  86,764 frames at 30 Hz, with `cam_high`, `cam_left_wrist`, and `cam_right_wrist` images.
+- State and action each have 14 values: six left joint positions, left gripper,
+  six right joint positions, and right gripper. `adapt_to_pi=False` preserves
+  the dataset's units. The 12 joint targets are converted to deltas from the
+  current state; grippers remain absolute. Compute normalization statistics
+  through this preset, not from the raw absolute actions or another robot's assets.
+- The model has action dimension 32 and horizon 50. Training samples a clean
+  prefix uniformly from 0 through 15 positions, with an additional probability
+  of 0.25 of forcing the prefix length to zero. Prefix positions use per-token
+  diffusion time `t=0`; suffix positions retain the sampled diffusion time.
+- Flow-matching loss supervises only the 14 real action dimensions and valid
+  suffix positions. Clean prefixes and LeRobot `action_is_pad` positions beyond
+  the episode end are excluded; the reduction is normalized by the valid count.
+- `discrete_state_input=False` deliberately matches the completed Piper run.
+  This pi0.5 preset does not supply state tokens or a continuous state projection;
+  measured state is still required for joint-delta encoding and decoding.
+
+### Reproducing training
+
+Install the repository dependencies as described in the [README](../README.md).
+Download the pinned dataset into a dedicated LeRobot cache:
+
+```bash
+export HF_LEROBOT_HOME=/absolute/path/to/lerobot
+uv run python - <<'PY'
+import os
+from pathlib import Path
+from huggingface_hub import snapshot_download
+
+repo = "HITdongdong/piper_dual_tidy_desk_ros2_shifted"
+snapshot_download(
+    repo_id=repo,
+    repo_type="dataset",
+    revision="1a127a8d018c7cbf1afacc92dc7dcaaf510ee7272",
+    local_dir=Path(os.environ["HF_LEROBOT_HOME"]) / repo,
+)
+PY
+export TRAIN_CONFIG=pi05_piper_dual_tidy_desk_ros2_shifted_training_rtc
+uv run scripts/compute_norm_stats.py --config-name "$TRAIN_CONFIG"
+uv run scripts/train.py "$TRAIN_CONFIG" --exp-name tidy_desk_training_rtc \
+    --batch-size 16 --fsdp-devices 1 --num-workers 4
+```
+
+The preset starts from `gs://openpi-assets/checkpoints/pi05_base/params`, trains
+for 30,000 steps, and saves every 5,000 steps. Its defaults are batch 64 and
+FSDP 2; the command above uses the completed run's batch 16 / FSDP 1 overrides.
+The completed run's final checkpoint is `29999` because steps are zero-indexed.
+Normalization statistics live under
+`assets/pi05_piper_dual_tidy_desk_ros2_shifted_training_rtc/HITdongdong/piper_dual_tidy_desk_ros2_shifted/`
+and are copied into checkpoints. Preserve these assets when exporting a model.
+
+### Verification and inference boundary
+
+`src/openpi/models/rtc_training_test.py` covers clean-prefix inputs, token-wise
+time conditioning, valid-position loss masking, and scalar-time compatibility.
+The existing pi0 configuration regressions also pass. A CPU smoke run of the
+integrated code restored the full `gemma_2b` / `gemma_300m` checkpoint and used
+real first-frame and episode-end samples through the training transforms and
+`compute_loss(train=True)`. It verified three-camera inputs, normalization,
+episode padding, finite RTC loss, excluded-prefix/padding loss, and the RTC-off path.
+
+This is a training implementation, not a clean-prefix inference server. The
+standard PyTorch serving path uses zero-prefix sampling; legacy inference-time
+RTC guidance is not the same algorithm. A finite loss or offline smoke run does
+not establish real-robot success or safety. This publication does not restart
+training or change the exported checkpoint.
+

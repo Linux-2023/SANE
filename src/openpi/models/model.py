@@ -109,6 +109,8 @@ class Observation(Generic[ArrayT]):
     # Logging fields
     episode_index: at.Int[ArrayT, "*b"] | None = None
     frame_index: at.Int[ArrayT, "*b"] | None = None
+    # LeRobot marks action targets beyond the end of an episode.
+    action_is_pad: at.Bool[ArrayT, "*b ah"] | None = None
 
     # Previous state and action for RTC.
     prev_state: at.Float[ArrayT, "*b s"] | None = None
@@ -165,6 +167,7 @@ class Observation(Generic[ArrayT]):
             gpr_prev_action=gpr_prev_action,
             episode_index=data.get("episode_index"),
             frame_index=data.get("frame_index"),
+            action_is_pad=data.get("action_is_pad"),
         )
 
 
@@ -251,6 +254,7 @@ def preprocess_observation(
         actions_during_latency=observation.actions_during_latency,
         episode_index=observation.episode_index,
         frame_index=observation.frame_index,
+        action_is_pad=observation.action_is_pad,
     )
 
 

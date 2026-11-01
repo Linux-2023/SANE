@@ -1385,6 +1385,52 @@ _CONFIGS = [
         exp_name="debug_pi05",
         wandb_enabled=False,
     ),
+    TrainConfig(
+        name="pi05_piper_dual_tidy_desk_ros2_shifted_training_rtc",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=50,
+            discrete_state_input=False,
+            train_time_rtc=True,
+            train_time_rtc_max_prefix_frac=0.3,
+            train_time_rtc_prefix_drop_p=0.25,
+            train_time_rtc_action_dim=14,
+        ),
+        data=LeRobotPiperDataConfig(
+            repo_id="HITdongdong/piper_dual_tidy_desk_ros2_shifted",
+            base_config=DataConfig(prompt_from_task=True),
+            default_prompt="Tidy up the crumpled papers and pens on the desk.",
+            adapt_to_pi=False,
+            use_delta_joint_actions=True,
+            repack_transforms=_transforms.Group(
+                inputs=[
+                    _transforms.RepackTransform(
+                        {
+                            "images": {
+                                "cam_high": "observation.images.cam_high",
+                                "cam_left_wrist": "observation.images.cam_left_wrist",
+                                "cam_right_wrist": "observation.images.cam_right_wrist",
+                            },
+                            "state": "observation.state",
+                            "actions": "action",
+                            "action_is_pad": "action_is_pad",
+                            "prompt": "prompt",
+                            "episode_index": "episode_index",
+                            "frame_index": "frame_index",
+                        }
+                    )
+                ]
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        batch_size=64,
+        num_workers=4,
+        num_train_steps=30_000,
+        save_interval=5_000,
+        keep_period=5_000,
+        fsdp_devices=2,
+    ),
     #
     # RoboArena configs.
     #

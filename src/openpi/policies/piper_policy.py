@@ -80,6 +80,8 @@ class PiperInputs(transforms.DataTransformFn):
             actions = np.asarray(data["actions"])
             actions = _encode_actions_inv(actions, adapt_to_pi=self.adapt_to_pi)
             inputs["actions"] = actions.copy()
+        if "action_is_pad" in data:
+            inputs["action_is_pad"] = data["action_is_pad"]
 
         if "prompt" in data:
             inputs["prompt"] = data["prompt"]
